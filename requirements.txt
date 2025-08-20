@@ -1,0 +1,7 @@
+# requirements.txt
+python-binance==1.0.29
+PyYAML
+aiohttp
+async_timeout
+pandas
+rich
