@@ -10,7 +10,7 @@
   - bookTicker: лучшая bid/ask для всех символов. GET /api/v3/ticker/bookTicker
   - 24hr ticker: суточная статистика, используем quoteVolume. GET /api/v3/ticker/24hr
   - klines: исторические свечи для волатильности. GET /api/v3/klines
-(см. оф. доки) 
+(см. оф. доки)
 """
 import asyncio
 import math
