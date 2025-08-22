@@ -8,6 +8,7 @@ from logging.handlers import RotatingFileHandler
 from binance_client import BinanceAsync
 from market_maker import MarketMaker
 from pair_scanner import PairScanner  # <-- добавили
+from risk import RiskManager
 
 # === ЛОГГИРОВАНИЕ ===
 def setup_logging(log_path: str = "bot.log", level=logging.INFO, to_console: bool = True):
@@ -94,6 +95,15 @@ async def main():
                 e,
                 cfg.get("strategy", {}).get("symbol"),
             )
+
+    # === Risk controls ===
+    risk_cfg = cfg.get("risk", {})
+    risk_mgr = RiskManager(client_wrap)
+    if risk_cfg.get("stop_to_usdt", False):
+        await risk_mgr.panic_sell_all()
+        await client_wrap.close()
+        logger.info("risk.stop_to_usdt: all assets sold, exiting")
+        return
 
     # TUI
     tui = None
