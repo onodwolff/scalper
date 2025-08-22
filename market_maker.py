@@ -37,6 +37,9 @@ class MarketMaker:
         self.aggressive_bps = float(s.get('aggressive_bps', 0.0))
         self.allow_short = bool(s.get('allow_short', False))
 
+        bal_cfg = cfg.get('balance_check', {})
+        self.balance_check_enabled = bool(bal_cfg.get('enabled', False))
+
         # сервис
         self.status_poll_interval = float(s.get('status_poll_interval', 2.0))
         self.stats_interval = float(s.get('stats_interval', 30.0))
@@ -175,6 +178,45 @@ class MarketMaker:
         fee_total = (self.maker_fee_pct + self.taker_fee_pct) if self.aggressive_take else (2.0 * self.maker_fee_pct)
         exp_net = exp_gross - fee_total
         return buy_p, sell_p, mid, exp_gross, exp_net
+
+    async def _check_balance(self, side: str, qty: float, price: float) -> float:
+        """Ensure there are enough funds for the order and return adjusted qty."""
+        if not self.balance_check_enabled:
+            return qty
+        try:
+            bal = await self.client_wrap.check_balance(self.symbol, side, qty)
+            free_base = Decimal(str(bal.get("base", 0)))
+            free_quote = Decimal(str(bal.get("quote", 0)))
+        except Exception as e:
+            logger.warning("Не удалось получить балансы: %s", e)
+            return qty
+
+        if side == SIDE_BUY:
+            need_quote = Decimal(str(price)) * Decimal(str(qty))
+            if free_quote < need_quote:
+                max_qty = free_quote / Decimal(str(price)) if price > 0 else Decimal('0')
+                max_qty = Decimal(str(round_step(float(max_qty), self.step_size, precision=8)))
+                if max_qty <= 0 or (self.min_qty and float(max_qty) < float(self.min_qty)):
+                    logger.warning("Недостаточно %s: требуется %s, доступно %s", self.quote_asset, need_quote, free_quote)
+                    return 0.0
+                logger.warning(
+                    "Недостаточно %s: требуется %s, доступно %s. Уменьшаем qty до %s",
+                    self.quote_asset, need_quote, free_quote, max_qty,
+                )
+                return float(max_qty)
+        else:
+            if free_base < Decimal(str(qty)):
+                max_qty = Decimal(str(round_step(float(free_base), self.step_size, precision=8)))
+                if max_qty <= 0 or (self.min_qty and float(max_qty) < float(self.min_qty)):
+                    logger.warning("Недостаточно %s: требуется %s, доступно %s", self.base_asset, qty, free_base)
+                    return 0.0
+                logger.warning(
+                    "Недостаточно %s: требуется %s, доступно %s. Уменьшаем qty до %s",
+                    self.base_asset, qty, free_base, max_qty,
+                )
+                return float(max_qty)
+
+        return qty
 
     # ---------- TUI push ----------
     def _push_tui_market(self, best_bid: float, best_ask: float, mid: float, mkt_spread: float):
@@ -466,6 +508,7 @@ class MarketMaker:
         # BUY
         if 'BUY' not in self.open_orders:
             diagq = self._diagnose_qty(buy_p); qty = diagq["qty"]
+            qty = await self._check_balance(SIDE_BUY, qty, buy_p)
             if qty > 0:
                 try:
                     order = await self.client_wrap.create_order(
@@ -517,7 +560,9 @@ class MarketMaker:
         # SELL
         if 'SELL' not in self.open_orders:
             diagq = self._diagnose_qty(sell_p); qty = diagq["qty"]
-            if not self.allow_short:
+            if self.balance_check_enabled:
+                qty = await self._check_balance(SIDE_SELL, qty, sell_p)
+            elif not self.allow_short:
                 max_sell = float(self.base)
                 qty = min(qty, max_sell) if max_sell > 0 else 0.0
             if qty > 0:

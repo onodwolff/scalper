@@ -72,6 +72,23 @@ class BinanceAsync:
             return await self.shadow.cancel_order(**kwargs)
         return await self.client.cancel_order(**kwargs)
 
+    async def check_balance(self, symbol: str, side: str, qty: float):
+        """Return free balances for base and quote assets of *symbol*.
+
+        When shadow trading is enabled, returns very large balances so that
+        balance checks never block order creation.
+        """
+        base = symbol[:-4] if symbol.endswith("USDT") else symbol[:-3]
+        quote = symbol[-4:] if symbol.endswith("USDT") else symbol[-3:]
+        if self.shadow_enabled:
+            return {"base": float("inf"), "quote": float("inf")}
+        base_info = await self.client.get_asset_balance(asset=base)
+        quote_info = await self.client.get_asset_balance(asset=quote)
+        return {
+            "base": float(base_info.get("free", 0.0)),
+            "quote": float(quote_info.get("free", 0.0)),
+        }
+
     async def close(self):
         try:
             if self.client:
