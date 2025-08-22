@@ -67,8 +67,8 @@ async def main():
     scanner_cfg = cfg.get("scanner", {})
     if scanner_cfg.get("enabled", False):
         try:
-            scanner = PairScanner(client_wrap.client, logger=logging.getLogger("pair_scanner"))
-            chosen = await scanner.select_best(scanner_cfg)
+            scanner = PairScanner(scanner_cfg, client_wrap.client)
+            chosen = await scanner.select_best()
             if chosen:
                 sym, meta = chosen["symbol"], chosen["meta"]
                 old = cfg.get("strategy", {}).get("symbol")

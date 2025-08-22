@@ -191,8 +191,11 @@ class PairScanner:
     def __init__(self, cfg: Dict[str, Any], client: AsyncClient):
         self.cfg = cfg
         self.client = client
-    async def pick_best(self) -> Dict[str, Any]:
+    async def select_best(self) -> Dict[str, Any]:
         return await _scan_impl(self.cfg, self.client)
+
+    # backward-compatibility alias
+    pick_best = select_best
 
 # самотест на прямой запуск
 if __name__ == "__main__":
