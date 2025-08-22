@@ -1,50 +1,36 @@
-# config.yaml
-
 api:
-  key: "wQJHAySx4hd8ZemgBafh21H2yQv4TOk8l3f3qxlgmyAu5aqbjUiUjMGf47EyWve3"
-  secret: "Anoek8oF21CG375gcYrANn6ahiQ4nXPVgmCwPsNjqi7UzFldVAr39xGXaPSJlvXK"
-  paper: true      # не критично для shadow; пусть остаётся true
-
+  key: wQJHAySx4hd8ZemgBafh21H2yQv4TOk8l3f3qxlgmyAu5aqbjUiUjMGf47EyWve3
+  secret: Anoek8oF21CG375gcYrANn6ahiQ4nXPVgmCwPsNjqi7UzFldVAr39xGXaPSJlvXK
+  paper: true
 shadow:
-  enabled: true            # включаем shadow-trading (чтение реальных потоков, но ордера — локально)
-  market: "prod"           # "prod" = реальные публичные WS-стримы; "testnet" = тестовые
-  maker_queue_alpha: 0.85  # эмпирика очереди в симуляторе (0.7..0.9). Больше — реже «мгновенные» филлы
-
+  enabled: true
+  market: prod
+  maker_queue_alpha: 0.85
 balance_check:
   enabled: true
-
 risk:
-  stop_to_usdt: true
-  exit_after_stop: true  # exit after panic sell if enabled
-
+  stop_to_usdt: false
+  exit_after_stop: false
 ui:
   enabled: true
   refresh_hz: 8
   alt_screen: true
   min_refresh_ms: 150
-
 strategy:
-  # подставь сюда пару из pair_scanner с нормальным спредом
-  symbol: "MANTAUSDT"        # пока можно оставить; для теста — смени на найденную шире
-  paper_cash: 1000           # стартовый «банк»
-  quote_size: 100.0           # бюджет на сторону (≈ сумма на один лимитный ордер в котируемой валюте)
-  target_pct: 0.26         # пошире котировка, чтобы план был отличим на mid
-  min_spread_pct: 0.05    # показываем план даже в очень узкий рынок (паузу всё равно покажем в Диагностике)
+  symbol: LINKUSDT
+  paper_cash: 1000
+  quote_size: 100.0
+  target_pct: 0.26
+  min_spread_pct: 0.05
 econ:
-  min_net_pct: 0.01        # порог по экономике пониже, чтобы котирование чаще запускалось (для тестов)
-  enforce_post_only: true     # жёстко пост-онли: если ордер пересекает рынок, биржа его отклонит
-
-
-  # Комиссии (по умолчанию у Binance ~0.1% maker/taker; при оплате BNB — ~0.075%)
-  maker_fee_pct: 0.10
-  taker_fee_pct: 0.10
-
-  post_only: true            # принудительно LIMIT_MAKER, чтобы не схватывать случайный taker
-  depth_level: 5             # глубина стакана из WS
-  reorder_interval: 1.0      # пауза между итерациями котирования
-  cancel_timeout: 10         # отмена «протухших» ордеров (сек)
-
-  # Пулы/диагностика
+  min_net_pct: 0.01
+  enforce_post_only: true
+  maker_fee_pct: 0.1
+  taker_fee_pct: 0.1
+  post_only: true
+  depth_level: 5
+  reorder_interval: 1.0
+  cancel_timeout: 10
   status_poll_interval: 2.0
   stats_interval: 30.0
   ws_timeout: 2.0
@@ -52,23 +38,23 @@ econ:
   rest_bootstrap_interval: 3.0
   plan_log_interval: 5.0
   journal_interval: 10.0
-
-  # Агрессивный режим выключен (taker дороже — убивает экономику на узком спреде)
-  aggressive: false       # true = допускаем тейкер, можем «перебивать» рынок
-  aggressive_bps: 0.0     # на сколько б.п. перебиваем спред (0 = по лучшей цене)
-
-
+  aggressive: false
+  aggressive_bps: 0.0
 scanner:
-  enabled: true           # тумблер автоподбора
-  quote: "USDT"           # сканируем пары к этой котируемой валюте
+  enabled: true
+  quote: USDT
   min_price: 0.01
-  min_vol_usdt_24h: 3000000   # фильтр по 24h-объёму в котируемой валюте
-  top_by_volume: 120      # взять топ-N по 24h объёму из кандидатов
-  max_pairs: 60           # не считать слишком много в глубину (ограничение нагрузки)
-  min_spread_bps: 5.0     # минимум мгновенного спрэда (базисные пункты)
-  vol_bars: 30            # 1m-бары для оценки «шумовой» волы; 0 = не считать
+  min_vol_usdt_24h: 3000000
+  top_by_volume: 120
+  max_pairs: 60
+  min_spread_bps: 5.0
+  vol_bars: 30
   score:
     w_spread: 1.0
     w_vol: 0.3
-  whitelist: []           # если указать — сканер ограничится этими символами
-  blacklist: ["BUSDUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT"]
+  whitelist: []
+  blacklist:
+  - BUSDUSDT
+  - USDCUSDT
+  - FDUSDUSDT
+  - TUSDUSDT

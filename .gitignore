@@ -1,5 +1,4 @@
 venv
-scaner.py
 __pycache__
 .idea
 *.log
