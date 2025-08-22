@@ -67,22 +67,33 @@ async def main():
     scanner_cfg = cfg.get("scanner", {})
     if scanner_cfg.get("enabled", False):
         try:
-            scanner = PairScanner(client_wrap.client, logger=logging.getLogger("pair_scanner"))
-            chosen = await scanner.select_best(scanner_cfg)
-            if chosen:
-                sym, meta = chosen["symbol"], chosen["meta"]
+            scanner = PairScanner(scanner_cfg, client_wrap.client)
+            chosen = await scanner.select_best()
+            if chosen and "best" in chosen:
+                best = chosen["best"]
+                sym = best.get("symbol")
                 old = cfg.get("strategy", {}).get("symbol")
                 cfg["strategy"]["symbol"] = sym
                 logger.info(
                     "SCANNER: выбран символ %s (старый=%s). spread=%.2f bps, vol24h≈%.0f %s%s",
-                    sym, old, meta.get("spread_bps", 0.0),
-                    meta.get("quote_vol_24h", 0.0), meta.get("quote", "USDT"),
-                    f", vol_bps≈{meta.get('vol_bps'):.2f}" if meta.get("vol_bps") is not None else ""
+                    sym,
+                    old,
+                    best.get("spread_bps", 0.0),
+                    best.get("vol_usdt_24h", 0.0),
+                    scanner_cfg.get("quote", "USDT"),
+                    f", vol_bps≈{best.get('vol_bps_1m', 0.0):.2f}" if best.get("vol_bps_1m") is not None else "",
                 )
             else:
-                logger.warning("SCANNER: не удалось выбрать символ — остаёмся на %s", cfg.get("strategy", {}).get("symbol"))
+                logger.warning(
+                    "SCANNER: не удалось выбрать символ — остаёмся на %s",
+                    cfg.get("strategy", {}).get("symbol"),
+                )
         except Exception as e:
-            logger.warning("SCANNER: ошибка выбора пары: %s — остаёмся на %s", e, cfg.get("strategy", {}).get("symbol"))
+            logger.warning(
+                "SCANNER: ошибка выбора пары: %s — остаёмся на %s",
+                e,
+                cfg.get("strategy", {}).get("symbol"),
+            )
 
     # TUI
     tui = None
