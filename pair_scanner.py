@@ -3,6 +3,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
+import math
 
 from binance import AsyncClient
 
@@ -18,6 +19,11 @@ class PairScore:
     spread_bps: float
     vol_usdt_24h: float
     vol_bps_1m: float
+    ok_volume: bool
+    ok_notional: bool
+    tick: float
+    step: float
+    min_notional: float
     score: float
 
 # ---- helpers ----
@@ -29,13 +35,6 @@ async def _get_24h(client: AsyncClient, symbol: str) -> Optional[Dict[str, Any]]
         return await client.get_ticker(symbol=symbol)  # 24h stats
     except Exception as e:
         log.debug("24h fail %s: %s", symbol, e)
-        return None
-
-async def _get_book(client: AsyncClient, symbol: str) -> Optional[Dict[str, Any]]:
-    try:
-        return await client.get_orderbook_ticker(symbol=symbol)  # best bid/ask
-    except Exception as e:
-        log.debug("bookTicker fail %s: %s", symbol, e)
         return None
 
 async def _get_klines_vol_bps(client: AsyncClient, symbol: str, bars: int) -> float:
@@ -69,45 +68,80 @@ async def _gather_limited(coros, limit: int = 20):
             return await coro
     return await asyncio.gather(*[wrap(c) for c in coros], return_exceptions=True)
 
+def _print_table(scored: List[PairScore], top: int):
+    from rich.console import Console
+    from rich.table import Table
+    from rich import box
+
+    con = Console()
+    tbl = Table(
+        title="SCANNER: USDT-пары (спред / волатильность / объём)",
+        box=box.SIMPLE_HEAVY,
+    )
+    for col in ["#", "Symbol", "Spread bps", "Vol(1m) bps", "24h Quote Vol", "Tick", "Step", "MinNotional", "OK", "Score"]:
+        justify = "right" if col in {"#", "Spread bps", "Vol(1m) bps", "24h Quote Vol", "Tick", "Step", "MinNotional", "Score"} else "left"
+        tbl.add_column(col, justify=justify)
+
+    for i, r in enumerate(scored[:top], 1):
+        ok = "YES" if (r.ok_volume and r.ok_notional) else "NO"
+        tbl.add_row(
+            str(i),
+            r.symbol,
+            f"{r.spread_bps:.2f}",
+            f"{r.vol_bps_1m:.2f}",
+            f"{r.vol_usdt_24h:.0f}",
+            f"{r.tick:.8f}",
+            f"{r.step:.8f}",
+            f"{r.min_notional:.2f}",
+            ok,
+            f"{r.score:.5f}",
+        )
+    con.print(tbl)
+
 # ---------- основной алгоритм сканера ----------
 async def _scan_impl(cfg: Dict[str, Any], client: AsyncClient) -> Dict[str, Any]:
-    """
-    Возвращает:
-      {
-        "best": PairScore(...).__dict__,
-        "top": [ PairScore.__dict__, ... ]
-      }
-    Конфиг: cfg["scanner"] блок.
-    """
+    """Сканирует спот-пары и возвращает лучшую по скору и топ-список."""
     sc = cfg.get("scanner", {})
     quote = sc.get("quote", "USDT")
     min_price = float(sc.get("min_price", 0.0001))
     min_vol_usdt = float(sc.get("min_vol_usdt_24h", 3_000_000))
-    top_by_volume = int(sc.get("top_by_volume", 120))
-    max_pairs = int(sc.get("max_pairs", 60))
+    min_notional_limit = float(sc.get("min_notional", 5.0))
     min_spread_bps = float(sc.get("min_spread_bps", 5.0))
-    vol_bars = int(sc.get("vol_bars", 0))
+    top_by_spread = int(sc.get("top_by_spread", 25))
+    vol_minutes = int(sc.get("vol_minutes", 0))
+    check_volume = bool(sc.get("check_volume_24h", True))
+    check_notional = bool(sc.get("check_min_notional", True))
     w_spread = float(sc.get("score", {}).get("w_spread", 1.0))
     w_vol = float(sc.get("score", {}).get("w_vol", 0.3))
+    w_volume_bonus = float(sc.get("score", {}).get("w_volume_bonus", 0.0))
     whitelist = sc.get("whitelist") or []
     blacklist = set(sc.get("blacklist") or [])
 
-    # 1) exchangeInfo -> кандидаты по котируемой валюте
+    # 1) exchangeInfo -> кандидаты по котируемой валюте и мета
     ex = await client.get_exchange_info()
     symbols = []
-    for s in ex["symbols"]:
+    meta: Dict[str, Dict[str, float]] = {}
+    for s in ex.get("symbols", []):
         try:
-            if s["status"] != "TRADING":
+            if s.get("status") != "TRADING":
                 continue
             if s.get("quoteAsset") != quote:
                 continue
-            sym = s["symbol"]
+            sym = s.get("symbol")
             if whitelist and sym not in whitelist:
                 continue
             if sym in blacklist:
                 continue
             if s.get("isSpotTradingAllowed") is False:
                 continue
+            lot = next((f for f in s.get("filters", []) if f.get("filterType") == "LOT_SIZE"), None)
+            pricef = next((f for f in s.get("filters", []) if f.get("filterType") == "PRICE_FILTER"), None)
+            notf = next((f for f in s.get("filters", []) if f.get("filterType") in ("MIN_NOTIONAL", "NOTIONAL")), None)
+            meta[sym] = {
+                "step": float(lot.get("stepSize", 0.0)) if lot else 0.0,
+                "tick": float(pricef.get("tickSize", 0.0)) if pricef else 0.0,
+                "min_notional": float((notf or {}).get("minNotional") or (notf or {}).get("notional") or 0.0),
+            }
             symbols.append(sym)
         except Exception:
             continue
@@ -115,67 +149,113 @@ async def _scan_impl(cfg: Dict[str, Any], client: AsyncClient) -> Dict[str, Any]
     if not symbols:
         raise RuntimeError("Сканер: нет кандидатов (фильтры слишком строгие?)")
 
-    # 2) 24h объёмы/цены
-    symbols = symbols[: max_pairs * 2]
-    t24s = await _gather_limited([_get_24h(client, s) for s in symbols], limit=20)
-    vols = {}
-    for s, t in zip(symbols, t24s):
+    # 2) bookTicker -> текущий спред для всех, затем топ-N по спреду
+    try:
+        books_all = await client.get_orderbook_ticker()
+    except Exception as e:
+        raise RuntimeError(f"Сканер: get_orderbook_ticker: {e}")
+
+    spread_rows = []  # (spread_bps, sym, bid, ask)
+    for b in books_all:
+        sym = b.get("symbol")
+        if sym not in symbols:
+            continue
+        try:
+            bid = float(b.get("bidPrice") or 0.0)
+            ask = float(b.get("askPrice") or 0.0)
+            if bid <= 0 or ask <= 0 or ask <= bid:
+                continue
+            spr = _bps((ask - bid) / bid)
+            if spr < min_spread_bps:
+                continue
+            spread_rows.append((spr, sym, bid, ask))
+        except Exception:
+            continue
+
+    spread_rows.sort(reverse=True)
+    top_syms = [sym for _, sym, _, _ in spread_rows[:max(5, top_by_spread)]]
+    if not top_syms:
+        raise RuntimeError("Сканер: нет пар с мгновенным спредом >= min_spread_bps")
+
+    spread_map = {sym: (bid, ask, spr) for spr, sym, bid, ask in spread_rows if sym in top_syms}
+
+    # 3) 24h статистика для топов
+    t24s = await _gather_limited([_get_24h(client, s) for s in top_syms], limit=20)
+    vols: Dict[str, float] = {}
+    ok_volume_map: Dict[str, bool] = {}
+    for s, t in zip(top_syms, t24s):
         if not isinstance(t, dict):
             continue
         try:
             qv = float(t.get("quoteVolume") or 0.0)
             lp = float(t.get("lastPrice") or 0.0)
-            if lp >= min_price and qv >= min_vol_usdt:
+            ok_volume = qv >= min_vol_usdt
+            if lp >= min_price and ((not check_volume) or ok_volume):
                 vols[s] = qv
+                ok_volume_map[s] = ok_volume
         except Exception:
             pass
 
-    top_syms = [kv[0] for kv in sorted(vols.items(), key=lambda kv: kv[1], reverse=True)[:top_by_volume]]
-    if not top_syms:
+    if not vols:
         raise RuntimeError("Сканер: не нашли пары с подходящим lastPrice/объёмом")
 
-    # 3) bookTicker -> мгновенный спред
-    books = await _gather_limited([_get_book(client, s) for s in top_syms], limit=30)
-    candidates = []
-    for s, b in zip(top_syms, books):
-        if not isinstance(b, dict):
-            continue
-        try:
-            bid = float(b["bidPrice"]); ask = float(b["askPrice"])
-            if bid <= 0 or ask <= 0 or ask <= bid:
-                continue
-            spread_bps = _bps((ask - bid) / bid)
-            if spread_bps < min_spread_bps:
-                continue
-            candidates.append((s, bid, ask, spread_bps, vols.get(s, 0.0)))
-        except Exception:
-            continue
-
-    if not candidates:
-        raise RuntimeError("Сканер: нет пар с мгновенным спредом >= min_spread_bps")
-
-    # 4) (опционально) «шумовая» вольность по 1m
-    vol_bps_map = {s: 0.0 for s, *_ in candidates}
-    if vol_bars > 1:
-        vols2 = await _gather_limited([_get_klines_vol_bps(client, s, vol_bars) for s, *_ in candidates], limit=10)
-        for (s, *_), vb in zip(candidates, vols2):
+    # 4) волатильность по 1m
+    vol_bps_map = {s: 0.0 for s in vols.keys()}
+    if vol_minutes > 1:
+        vols2 = await _gather_limited([_get_klines_vol_bps(client, s, vol_minutes) for s in vols.keys()], limit=10)
+        for s, vb in zip(vols.keys(), vols2):
             try:
-                vol_bps_map[s] = float(vb) if vb and vb == vb else 0.0  # NaN guard
+                vol_bps_map[s] = float(vb) if vb and vb == vb else 0.0
             except Exception:
                 vol_bps_map[s] = 0.0
 
-    # 5) скоринг
+    # 5) скоринг и таблица
     scored: List[PairScore] = []
-    for (s, bid, ask, spr_bps, qv) in candidates:
+    for s, qv in vols.items():
+        bid, ask, spr_bps = spread_map.get(s, (0.0, 0.0, 0.0))
         vb = vol_bps_map.get(s, 0.0)
-        score = w_spread * spr_bps + w_vol * vb
-        scored.append(PairScore(symbol=s, bid=bid, ask=ask, spread_bps=spr_bps,
-                                vol_usdt_24h=qv, vol_bps_1m=vb, score=score))
+        m = meta.get(s, {})
+        min_notional = float(m.get("min_notional", 0.0))
+        ok_notional = min_notional <= min_notional_limit
+        ok_volume = ok_volume_map.get(s, False)
+
+        spread_term = w_spread * spr_bps
+        vol_term = w_vol * vb
+        volume_term = w_volume_bonus * math.log10(qv + 1.0)
+        score = spread_term + vol_term + volume_term
+        if check_volume and not ok_volume:
+            score *= 0.5
+        if check_notional and not ok_notional:
+            score *= 0.5
+
+        scored.append(PairScore(
+            symbol=s,
+            bid=bid,
+            ask=ask,
+            spread_bps=spr_bps,
+            vol_usdt_24h=qv,
+            vol_bps_1m=vb,
+            ok_volume=ok_volume,
+            ok_notional=ok_notional,
+            tick=float(m.get("tick", 0.0)),
+            step=float(m.get("step", 0.0)),
+            min_notional=min_notional,
+            score=score,
+        ))
 
     scored.sort(key=lambda x: x.score, reverse=True)
     best = scored[0]
-    log.info("SCANNER: лучший %s | спред≈%.1f bps | вола≈%.1f bps | 24h≈%.0f USDT | score=%.2f",
-             best.symbol, best.spread_bps, best.vol_bps_1m, best.vol_usdt_24h, best.score)
+    log.info(
+        "SCANNER: лучший %s | спред≈%.1f bps | вола≈%.1f bps | 24h≈%.0f USDT | score=%.2f",
+        best.symbol,
+        best.spread_bps,
+        best.vol_bps_1m,
+        best.vol_usdt_24h,
+        best.score,
+    )
+
+    if sc.get("print_table", False):
+        _print_table(scored, top=min(len(scored), top_by_spread))
 
     top_list = [x.__dict__ for x in scored[:10]]
     return {"best": best.__dict__, "top": top_list}
