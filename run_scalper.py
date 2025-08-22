@@ -1,6 +1,7 @@
 # run_scalper.py
 import asyncio
 import os
+import tempfile
 import yaml
 import logging
 from logging.handlers import RotatingFileHandler
@@ -75,6 +76,16 @@ async def main():
                 sym = best.get("symbol")
                 old = cfg.get("strategy", {}).get("symbol")
                 cfg["strategy"]["symbol"] = sym
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        "w", delete=False, dir=".", encoding="utf-8"
+                    ) as tf:
+                        yaml.safe_dump(cfg, tf, allow_unicode=True, sort_keys=False)
+                        tmp_name = tf.name
+                    os.replace(tmp_name, "config.yaml")
+                    logger.info("CONFIG: конфиг обновлён, сохранена пара %s", sym)
+                except Exception as e:
+                    logger.warning("CONFIG: не удалось сохранить конфиг: %s", e)
                 logger.info(
                     "SCANNER: выбран символ %s (старый=%s). spread=%.2f bps, vol24h≈%.0f %s%s",
                     sym,
