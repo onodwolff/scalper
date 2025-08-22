@@ -91,23 +91,33 @@ class ShadowExecutor:
 
         # Post-only отклонение, если бы заявка взяла ликвидность
         if type == "LIMIT_MAKER" and self.post_only_reject:
-            if self.best_ask is not None and self.best_bid is not None:
-                would_take = (side == "BUY" and px >= self.best_ask) or (side == "SELL" and px <= self.best_bid)
-                if would_take:
-                    oid = self._next_id()
-                    o = {
-                        "symbol": symbol, "orderId": oid, "side": side, "status": "REJECTED",
-                        "type": type, "timeInForce": timeInForce, "price": px,
-                        "origQty": qty, "executedQty": 0.0, "cummulativeQuoteQty": 0.0,
-                        "liquidity": None, "ts": time.time(),
-                    }
-                    self._orders[oid] = o
-                    return o
+            would_take = (
+                (side == "BUY" and self.best_ask is not None and px >= self.best_ask)
+                or (side == "SELL" and self.best_bid is not None and px <= self.best_bid)
+            )
+            if would_take:
+                oid = self._next_id()
+                o = {
+                    "symbol": symbol,
+                    "orderId": oid,
+                    "side": side,
+                    "status": "REJECTED",
+                    "type": type,
+                    "timeInForce": timeInForce,
+                    "price": px,
+                    "origQty": qty,
+                    "executedQty": 0.0,
+                    "cummulativeQuoteQty": 0.0,
+                    "liquidity": None,
+                    "ts": time.time(),
+                }
+                self._orders[oid] = o
+                return o
 
         # Непост-онли лимитка, пересекающая рынок — исполняем как ТЕЙКЕР целиком
-        if type != "LIMIT_MAKER" and (self.best_ask is not None and self.best_bid is not None):
-            cross_buy = (side == "BUY" and px >= self.best_ask)
-            cross_sell = (side == "SELL" and px <= self.best_bid)
+        if type != "LIMIT_MAKER":
+            cross_buy = side == "BUY" and self.best_ask is not None and px >= self.best_ask
+            cross_sell = side == "SELL" and self.best_bid is not None and px <= self.best_bid
             if cross_buy or cross_sell:
                 oid = self._next_id()
                 # имитируем проскальзывание
@@ -117,10 +127,17 @@ class ShadowExecutor:
                     trade_px = self.best_bid * (1.0 - self.taker_slippage_bps / 10000.0)
 
                 o = {
-                    "symbol": symbol, "orderId": oid, "side": side, "status": "FILLED",
-                    "type": type, "timeInForce": timeInForce, "price": px,
-                    "origQty": qty, "executedQty": qty,
-                    "cummulativeQuoteQty": qty * trade_px, "liquidity": "TAKER",
+                    "symbol": symbol,
+                    "orderId": oid,
+                    "side": side,
+                    "status": "FILLED",
+                    "type": type,
+                    "timeInForce": timeInForce,
+                    "price": px,
+                    "origQty": qty,
+                    "executedQty": qty,
+                    "cummulativeQuoteQty": qty * trade_px,
+                    "liquidity": "TAKER",
                     "ts": time.time(),
                 }
                 self._orders[oid] = o
