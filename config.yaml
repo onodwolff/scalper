@@ -11,7 +11,7 @@ shadow:
   maker_queue_alpha: 0.85  # эмпирика очереди в симуляторе (0.7..0.9). Больше — реже «мгновенные» филлы
 
 balance_check:
-  enabled: false
+  enabled: true
 
 ui:
   enabled: true
