@@ -50,9 +50,8 @@ econ:
   journal_interval: 10.0
 
   # Агрессивный режим выключен (taker дороже — убивает экономику на узком спреде)
-  aggressive_take: false
-  aggressive_bps: 0.0
-  aggressive_max_notional: 10.0
+  aggressive: false       # true = допускаем тейкер, можем «перебивать» рынок
+  aggressive_bps: 0.0     # на сколько б.п. перебиваем спред (0 = по лучшей цене)
 
 
 scanner:

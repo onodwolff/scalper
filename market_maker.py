@@ -33,7 +33,7 @@ class MarketMaker:
         self.taker_fee_pct = float(econ.get('taker_fee_pct', s.get('taker_fee_pct', self.maker_fee_pct)))
         self.econ_min_net = float(econ.get('min_net_pct', 0.10))
         self.enforce_post_only = bool(econ.get('enforce_post_only', s.get('post_only', True)))
-        self.aggressive_take = bool(s.get('aggressive_take', False))
+        self.aggressive = bool(s.get('aggressive', False))
         self.aggressive_bps = float(s.get('aggressive_bps', 0.0))
         self.allow_short = bool(s.get('allow_short', False))
 
@@ -120,9 +120,10 @@ class MarketMaker:
             self.symbol, self.step_size, self.tick_size, self.min_notional, self.min_qty
         )
         logger.info(
-            "Стратегия: символ=%s, базовая=%s, котируемая=%s, целевой спред=%.5f%%, пост-онли=%s, бюджет/сторону=%s %s",
+            "Стратегия: символ=%s, базовая=%s, котируемая=%s, целевой спред=%.5f%%, пост-онли=%s, агрессивный=%s, бюджет/сторону=%s %s",
             self.symbol, self.base_asset, self.quote_asset, self.target_pct,
-            (self.enforce_post_only and not self.aggressive_take), str(self.quote_size), self.quote_asset
+            (self.enforce_post_only and not self.aggressive), self.aggressive,
+            str(self.quote_size), self.quote_asset
         )
         if self.tui:
             self.tui.set_symbol(self.symbol, self.base_asset, self.quote_asset)
@@ -165,7 +166,7 @@ class MarketMaker:
         if sell_p < float(ask):
             sell_p = _round_step_up(ask, self.tick_size, precision=8)
 
-        if self.aggressive_take:
+        if self.aggressive:
             if self.aggressive_bps > 0:
                 bump = 1.0 + (self.aggressive_bps / 10000.0)
                 buy_p = max(buy_p, _round_step_up(ask * bump, self.tick_size, precision=8))
@@ -175,7 +176,7 @@ class MarketMaker:
                 sell_p = min(sell_p, round_step(bid, self.tick_size, precision=8))
 
         exp_gross = ((sell_p - buy_p) / buy_p) * 100 if buy_p > 0 else 0.0
-        fee_total = (self.maker_fee_pct + self.taker_fee_pct) if self.aggressive_take else (2.0 * self.maker_fee_pct)
+        fee_total = (self.maker_fee_pct + self.taker_fee_pct) if self.aggressive else (2.0 * self.maker_fee_pct)
         exp_net = exp_gross - fee_total
         return buy_p, sell_p, mid, exp_gross, exp_net
 
@@ -503,7 +504,10 @@ class MarketMaker:
 
         await self._refresh_open_orders()
 
-        ordertype = ORDER_TYPE_LIMIT_MAKER if (self.enforce_post_only and not self.aggressive_take) else ORDER_TYPE_LIMIT
+        buy_type = sell_type = ORDER_TYPE_LIMIT_MAKER if self.enforce_post_only and not self.aggressive else ORDER_TYPE_LIMIT
+        if self.aggressive:
+            buy_type = ORDER_TYPE_MARKET if buy_p >= best_ask else ORDER_TYPE_LIMIT
+            sell_type = ORDER_TYPE_MARKET if sell_p <= best_bid else ORDER_TYPE_LIMIT
 
         # BUY
         if 'BUY' not in self.open_orders:
@@ -511,10 +515,10 @@ class MarketMaker:
             qty = await self._check_balance(SIDE_BUY, qty, buy_p)
             if qty > 0:
                 try:
-                    order = await self.client_wrap.create_order(
-                        symbol=self.symbol, side=SIDE_BUY, type=ordertype,
-                        quantity=str(qty), price=str(buy_p), timeInForce=TIME_IN_FORCE_GTC
-                    )
+                    params = dict(symbol=self.symbol, side=SIDE_BUY, type=buy_type, quantity=str(qty), timeInForce=TIME_IN_FORCE_GTC)
+                    if buy_type != ORDER_TYPE_MARKET:
+                        params['price'] = str(buy_p)
+                    order = await self.client_wrap.create_order(**params)
                     self._rest_count["create_order"] += 1
                     status = order.get('status', 'NEW')
 
@@ -540,9 +544,9 @@ class MarketMaker:
                             'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
                             'price': float(buy_p)
                         }
-                        logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                        logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | type=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, buy_p, self.quote_asset,
-                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+                                    buy_type)
                         self._push_tui_order_counters()
                     else:
                         self.open_orders['BUY'] = {
@@ -550,13 +554,13 @@ class MarketMaker:
                             'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
                             'price': float(buy_p)
                         }
-                        logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                        logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | type=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, buy_p, self.quote_asset,
-                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+                                    buy_type)
 
                     self._push_tui_order_event({
                         "ts": now, "side": "BUY", "orderId": order.get('orderId'),
-                        "status": status, "price": float(buy_p),
+                        "status": status, "price": float(buy_p) if buy_type != ORDER_TYPE_MARKET else None,
                         "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
                     })
                     self._push_tui_order_counters()
@@ -573,10 +577,10 @@ class MarketMaker:
                 qty = min(qty, max_sell) if max_sell > 0 else 0.0
             if qty > 0:
                 try:
-                    order = await self.client_wrap.create_order(
-                        symbol=self.symbol, side=SIDE_SELL, type=ordertype,
-                        quantity=str(qty), price=str(sell_p), timeInForce=TIME_IN_FORCE_GTC
-                    )
+                    params = dict(symbol=self.symbol, side=SIDE_SELL, type=sell_type, quantity=str(qty), timeInForce=TIME_IN_FORCE_GTC)
+                    if sell_type != ORDER_TYPE_MARKET:
+                        params['price'] = str(sell_p)
+                    order = await self.client_wrap.create_order(**params)
                     self._rest_count["create_order"] += 1
                     status = order.get('status', 'NEW')
 
@@ -602,9 +606,9 @@ class MarketMaker:
                             'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
                             'price': float(sell_p)
                         }
-                        logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                        logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | type=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, sell_p, self.quote_asset,
-                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+                                    sell_type)
                         self._push_tui_order_counters()
                     else:
                         self.open_orders['SELL'] = {
@@ -612,13 +616,13 @@ class MarketMaker:
                             'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
                             'price': float(sell_p)
                         }
-                        logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                        logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | type=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, sell_p, self.quote_asset,
-                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+                                    sell_type)
 
                     self._push_tui_order_event({
                         "ts": now, "side": "SELL", "orderId": order.get('orderId'),
-                        "status": status, "price": float(sell_p),
+                        "status": status, "price": float(sell_p) if sell_type != ORDER_TYPE_MARKET else None,
                         "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
                     })
                     self._push_tui_order_counters()
