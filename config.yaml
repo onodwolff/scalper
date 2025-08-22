@@ -10,6 +10,9 @@ shadow:
   market: "prod"           # "prod" = реальные публичные WS-стримы; "testnet" = тестовые
   maker_queue_alpha: 0.85  # эмпирика очереди в симуляторе (0.7..0.9). Больше — реже «мгновенные» филлы
 
+balance_check:
+  enabled: false
+
 ui:
   enabled: true
   refresh_hz: 1
