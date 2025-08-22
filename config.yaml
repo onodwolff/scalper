@@ -13,6 +13,9 @@ shadow:
 balance_check:
   enabled: true
 
+risk:
+  stop_to_usdt: false
+
 ui:
   enabled: true
   refresh_hz: 1
