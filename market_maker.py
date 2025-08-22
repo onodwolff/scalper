@@ -518,42 +518,48 @@ class MarketMaker:
                     self._rest_count["create_order"] += 1
                     status = order.get('status', 'NEW')
 
+                    exec_qty = Decimal(str(order.get('executedQty') or 0))
+                    cum_quote = Decimal(str(order.get('cummulativeQuoteQty') or 0))
+                    liq = order.get('liquidity')
+                    if status != 'REJECTED':
+                        self.orders_created_total += 1
                     if status == 'REJECTED':
                         self.orders_rejected_total += 1
-                        self._push_tui_order_event({
-                            "ts": now, "side": "BUY", "orderId": order.get('orderId'),
-                            "status": status, "price": float(buy_p),
-                            "executedQty": 0.0, "cummulativeQuoteQty": 0.0
-                        })
                         logger.info("REJECT BUY (post-only пересечение): id=%s price=%.8f", order.get('orderId'), buy_p)
                     elif status == 'FILLED':
-                        self.orders_created_total += 1
                         self.orders_filled_total += 1
-                        exec_qty = Decimal(str(order.get('executedQty') or 0))
-                        cum_quote = Decimal(str(order.get('cummulativeQuoteQty') or 0))
-                        liq = order.get('liquidity')
                         self._apply_fill_delta('BUY', Decimal('0'), Decimal('0'), exec_qty, cum_quote, liq)
-                        self._push_tui_order_event({
-                            "ts": time.time(), "side": "BUY", "orderId": order.get('orderId'),
-                            "status": "FILLED", "price": float(buy_p),
-                            "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
-                        })
-                    else:
-                        self.orders_created_total += 1
-                        exec_qty = float(order.get('executedQty') or 0.0)
-                        cum_quote = float(order.get('cummulativeQuoteQty') or 0.0)
-                        self.open_orders['BUY'] = {'orderId': order['orderId'], 'ts': now, 'status': status,
-                                                   'executedQty': exec_qty, 'cummulativeQuoteQty': cum_quote,
-                                                   'price': float(buy_p)}
+                    elif status == 'CANCELED':
+                        self.orders_canceled_total += 1
+                    elif status == 'EXPIRED':
+                        self.orders_expired_total += 1
+                    elif status == 'PARTIALLY_FILLED':
+                        self._apply_fill_delta('BUY', Decimal('0'), Decimal('0'), exec_qty, cum_quote, liq)
+                        self.open_orders['BUY'] = {
+                            'orderId': order['orderId'], 'ts': now, 'status': status,
+                            'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
+                            'price': float(buy_p)
+                        }
                         logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, buy_p, self.quote_asset,
                                     (ordertype == ORDER_TYPE_LIMIT_MAKER))
-                        self._push_tui_order_event({
-                            "ts": now, "side": "BUY", "orderId": order.get('orderId'),
-                            "status": status, "price": float(buy_p),
-                            "executedQty": exec_qty, "cummulativeQuoteQty": cum_quote
-                        })
                         self._push_tui_order_counters()
+                    else:
+                        self.open_orders['BUY'] = {
+                            'orderId': order['orderId'], 'ts': now, 'status': status,
+                            'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
+                            'price': float(buy_p)
+                        }
+                        logger.info("РАЗМЕЩЁН BUY: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                                    order.get('orderId', '-'), float(qty), self.base_asset, buy_p, self.quote_asset,
+                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+
+                    self._push_tui_order_event({
+                        "ts": now, "side": "BUY", "orderId": order.get('orderId'),
+                        "status": status, "price": float(buy_p),
+                        "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
+                    })
+                    self._push_tui_order_counters()
                 except Exception as e:
                     logger.error("Ошибка размещения BUY: %s", e)
 
@@ -574,42 +580,48 @@ class MarketMaker:
                     self._rest_count["create_order"] += 1
                     status = order.get('status', 'NEW')
 
+                    exec_qty = Decimal(str(order.get('executedQty') or 0))
+                    cum_quote = Decimal(str(order.get('cummulativeQuoteQty') or 0))
+                    liq = order.get('liquidity')
+                    if status != 'REJECTED':
+                        self.orders_created_total += 1
                     if status == 'REJECTED':
                         self.orders_rejected_total += 1
-                        self._push_tui_order_event({
-                            "ts": now, "side": "SELL", "orderId": order.get('orderId'),
-                            "status": status, "price": float(sell_p),
-                            "executedQty": 0.0, "cummulativeQuoteQty": 0.0
-                        })
                         logger.info("REJECT SELL (post-only пересечение): id=%s price=%.8f", order.get('orderId'), sell_p)
                     elif status == 'FILLED':
-                        self.orders_created_total += 1
                         self.orders_filled_total += 1
-                        exec_qty = Decimal(str(order.get('executedQty') or 0))
-                        cum_quote = Decimal(str(order.get('cummulativeQuoteQty') or 0))
-                        liq = order.get('liquidity')
                         self._apply_fill_delta('SELL', Decimal('0'), Decimal('0'), exec_qty, cum_quote, liq)
-                        self._push_tui_order_event({
-                            "ts": time.time(), "side": "SELL", "orderId": order.get('orderId'),
-                            "status": "FILLED", "price": float(sell_p),
-                            "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
-                        })
-                    else:
-                        self.orders_created_total += 1
-                        exec_qty = float(order.get('executedQty') or 0.0)
-                        cum_quote = float(order.get('cummulativeQuoteQty') or 0.0)
-                        self.open_orders['SELL'] = {'orderId': order['orderId'], 'ts': now, 'status': status,
-                                                    'executedQty': exec_qty, 'cummulativeQuoteQty': cum_quote,
-                                                    'price': float(sell_p)}
+                    elif status == 'CANCELED':
+                        self.orders_canceled_total += 1
+                    elif status == 'EXPIRED':
+                        self.orders_expired_total += 1
+                    elif status == 'PARTIALLY_FILLED':
+                        self._apply_fill_delta('SELL', Decimal('0'), Decimal('0'), exec_qty, cum_quote, liq)
+                        self.open_orders['SELL'] = {
+                            'orderId': order['orderId'], 'ts': now, 'status': status,
+                            'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
+                            'price': float(sell_p)
+                        }
                         logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
                                     order.get('orderId', '-'), float(qty), self.base_asset, sell_p, self.quote_asset,
                                     (ordertype == ORDER_TYPE_LIMIT_MAKER))
-                        self._push_tui_order_event({
-                            "ts": now, "side": "SELL", "orderId": order.get('orderId'),
-                            "status": status, "price": float(sell_p),
-                            "executedQty": exec_qty, "cummulativeQuoteQty": cum_quote
-                        })
                         self._push_tui_order_counters()
+                    else:
+                        self.open_orders['SELL'] = {
+                            'orderId': order['orderId'], 'ts': now, 'status': status,
+                            'executedQty': float(exec_qty), 'cummulativeQuoteQty': float(cum_quote),
+                            'price': float(sell_p)
+                        }
+                        logger.info("РАЗМЕЩЁН SELL: id=%s | qty=%.8f %s | price=%.8f %s | пост-онли=%s.",
+                                    order.get('orderId', '-'), float(qty), self.base_asset, sell_p, self.quote_asset,
+                                    (ordertype == ORDER_TYPE_LIMIT_MAKER))
+
+                    self._push_tui_order_event({
+                        "ts": now, "side": "SELL", "orderId": order.get('orderId'),
+                        "status": status, "price": float(sell_p),
+                        "executedQty": float(exec_qty), "cummulativeQuoteQty": float(cum_quote)
+                    })
+                    self._push_tui_order_counters()
                 except Exception as e:
                     logger.error("Ошибка размещения SELL: %s", e)
 
