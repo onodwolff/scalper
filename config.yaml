@@ -63,12 +63,15 @@ scanner:
   quote: "USDT"           # сканируем пары к этой котируемой валюте
   min_price: 0.01
   min_vol_usdt_24h: 3000000   # фильтр по 24h-объёму в котируемой валюте
-  top_by_volume: 120      # взять топ-N по 24h объёму из кандидатов
-  max_pairs: 60           # не считать слишком много в глубину (ограничение нагрузки)
+  top_by_spread: 25       # предварительный топ по текущему спреду
   min_spread_bps: 5.0     # минимум мгновенного спрэда (базисные пункты)
-  vol_bars: 30            # 1m-бары для оценки «шумовой» волы; 0 = не считать
+  vol_minutes: 30         # 1m-бары для оценки «шумовой» волы; 0 = не считать
+  min_notional: 5.0       # порог проверки MIN_NOTIONAL
+  check_min_notional: true
+  check_volume_24h: true
   score:
     w_spread: 1.0
     w_vol: 0.3
+    w_volume_bonus: 0.0
   whitelist: []           # если указать — сканер ограничится этими символами
   blacklist: ["BUSDUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT"]
