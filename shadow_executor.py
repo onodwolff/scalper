@@ -57,9 +57,16 @@ class ShadowExecutor:
 
     @staticmethod
     def _crosses(side: str, price: float, bid: Optional[float], ask: Optional[float]) -> bool:
-        if bid is None or ask is None:
-            return False
-        return (side == "BUY" and price >= ask) or (side == "SELL" and price <= bid)
+        """Return True if order would immediately take liquidity.
+
+        Previously both bid and ask had to be known which could let a post-only
+        order slip through when only one side of the book was available. Now we
+        check the relevant side depending on order direction.
+        """
+        if side == "BUY":
+            return ask is not None and price >= ask
+        else:
+            return bid is not None and price <= bid
 
     # ----------------- market data callbacks -----------------
     async def on_book_update(self, symbol: str, bids, asks):
@@ -152,11 +159,16 @@ class ShadowExecutor:
                 self._by_symbol.setdefault(symbol, set()).add(oid)
                 return o
 
-            if otype == "MARKET" and self.cfg.simulate_market_fills and bid and ask:
+            if otype == "MARKET" and self.cfg.simulate_market_fills:
                 slip = self.cfg.market_slippage_bps / 10000.0
-                exec_px = (ask * (1.0 + slip)) if side == "BUY" else (bid * (1.0 - slip))
-                await asyncio.sleep(self.cfg.market_latency_ms / 1000.0)
-                return _exec_taker(exec_px)
+                exec_px = None
+                if side == "BUY" and ask is not None:
+                    exec_px = ask * (1.0 + slip)
+                elif side == "SELL" and bid is not None:
+                    exec_px = bid * (1.0 - slip)
+                if exec_px is not None:
+                    await asyncio.sleep(self.cfg.market_latency_ms / 1000.0)
+                    return _exec_taker(exec_px)
 
             # --- LIMIT_MAKER: REJECT, если пересекает рынок ---
             if otype == "LIMIT_MAKER" and self._crosses(side, price, bid, ask) and self.cfg.post_only_reject:
@@ -173,9 +185,12 @@ class ShadowExecutor:
                 return o
 
             # --- LIMIT, пересекающий рынок => тейкер, если разрешено ---
-            if otype == "LIMIT" and self.cfg.simulate_market_fills and bid and ask and self._crosses(side, price, bid, ask):
+            if otype == "LIMIT" and self.cfg.simulate_market_fills and self._crosses(side, price, bid, ask):
                 slip = self.cfg.market_slippage_bps / 10000.0
-                exec_px = (ask * (1.0 + slip)) if side == "BUY" else (bid * (1.0 - slip))
+                if side == "BUY":
+                    exec_px = ask * (1.0 + slip)
+                else:
+                    exec_px = bid * (1.0 - slip)
                 await asyncio.sleep(self.cfg.market_latency_ms / 1000.0)
                 return _exec_taker(exec_px)
 
