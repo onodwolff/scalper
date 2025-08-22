@@ -14,11 +14,11 @@ balance_check:
   enabled: true
 
 risk:
-  stop_to_usdt: false
+  stop_to_usdt: true
 
 ui:
   enabled: true
-  refresh_hz: 1
+  refresh_hz: 8
   alt_screen: true
   min_refresh_ms: 150
 
@@ -58,7 +58,7 @@ econ:
 
 
 scanner:
-  enabled: false           # тумблер автоподбора
+  enabled: true           # тумблер автоподбора
   quote: "USDT"           # сканируем пары к этой котируемой валюте
   min_price: 0.01
   min_vol_usdt_24h: 3000000   # фильтр по 24h-объёму в котируемой валюте
