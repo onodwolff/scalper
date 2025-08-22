@@ -4,7 +4,7 @@ from binance_client import BinanceAsync
 
 
 @pytest.mark.asyncio
-async def test_shadow_executor_limit_and_market():
+async def test_shadow_executor_behaviour():
     client = BinanceAsync(
         "key",
         "secret",
@@ -20,6 +20,18 @@ async def test_shadow_executor_limit_and_market():
     symbol = "TESTSYM"
     await client.on_book_update(symbol, [(99, 1)], [(101, 1)])
 
+    # post-only rejection on cross
+    rej = await client.create_order(
+        symbol=symbol,
+        side="BUY",
+        type="LIMIT_MAKER",
+        timeInForce="GTC",
+        quantity=1,
+        price=101,
+    )
+    assert rej["status"] == "REJECTED"
+
+    # regular limit order
     limit = await client.create_order(
         symbol=symbol,
         side="BUY",
@@ -49,4 +61,26 @@ async def test_shadow_executor_limit_and_market():
     assert m["liquidity"] == "TAKER"
     expected_px = 101 * 1.01
     assert m["cummulativeQuoteQty"] == pytest.approx(expected_px * 2)
+
+
+@pytest.mark.asyncio
+async def test_shadow_flag_routes_to_binance():
+    class Dummy:
+        def __init__(self):
+            self.called = False
+
+        async def create_order(self, **kwargs):
+            self.called = True
+            return {"status": "LIVE"}
+
+    client = BinanceAsync("key", "secret", shadow=False)
+    dummy = Dummy()
+    client.client = dummy
+
+    async def fail(**kwargs):  # should not be used
+        raise AssertionError("shadow executor called")
+
+    client.shadow.create_order = fail  # type: ignore
+    res = await client.create_order(symbol="S", side="BUY", type="MARKET", quantity=1)
+    assert dummy.called and res["status"] == "LIVE"
 
