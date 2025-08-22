@@ -101,9 +101,14 @@ async def main():
     risk_mgr = RiskManager(client_wrap)
     if risk_cfg.get("stop_to_usdt", False):
         await risk_mgr.panic_sell_all()
-        await client_wrap.close()
-        logger.info("risk.stop_to_usdt: all assets sold, exiting")
-        return
+        exit_after_stop = bool(risk_cfg.get("exit_after_stop", True))
+        logger.info(
+            "risk.stop_to_usdt: all assets sold, %s",
+            "exiting" if exit_after_stop else "continuing operation",
+        )
+        if exit_after_stop:
+            await client_wrap.close()
+            return
 
     # TUI
     tui = None
