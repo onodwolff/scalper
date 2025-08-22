@@ -15,6 +15,7 @@ balance_check:
 
 risk:
   stop_to_usdt: true
+  exit_after_stop: true  # exit after panic sell if enabled
 
 ui:
   enabled: true
